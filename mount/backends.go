@@ -16,10 +16,10 @@ import (
 type Backend string
 
 const (
-	BackendAFP Backend = "afp"  // Apple Filing Protocol — macOS default
-	BackendNFS Backend = "nfs"  // NFS — macOS alternative (anylinuxfs default)
-	BackendSMB Backend = "smb"  // SMB/CIFS — Windows default
-	BackendFTP Backend = "ftp"  // FTP — cross-platform fallback
+	BackendAFP Backend = "afp" // Apple Filing Protocol — macOS default
+	BackendNFS Backend = "nfs" // NFS — macOS alternative (anylinuxfs default)
+	BackendSMB Backend = "smb" // SMB/CIFS — Windows default
+	BackendFTP Backend = "ftp" // FTP — cross-platform fallback
 )
 
 // DefaultBackend returns the recommended backend for the current OS.
@@ -36,18 +36,10 @@ func DefaultBackend() Backend {
 
 // Config holds share server configuration.
 type Config struct {
-	Backend    Backend
-	ListenIP   string
-	ListenPort uint16
-	// NetworkShare allows connections from outside localhost.
+	Backend      Backend
+	ListenIP     string
+	ListenPort   uint16
 	NetworkShare bool
-}
-
-// ShareInfo describes a running share that the host can connect to.
-type ShareInfo struct {
-	Backend    Backend
-	MountURL   string // e.g. afp://127.0.0.1/linuxfs or smb://127.0.0.1/linuxfs
-	MountPoint string // where it was auto-mounted on the host
 }
 
 // Validate checks that the backend is supported on the current OS.

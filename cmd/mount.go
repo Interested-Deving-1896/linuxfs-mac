@@ -3,91 +3,97 @@
 package cmd
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
-
-	"github.com/spf13/cobra"
 )
 
-var (
-	flagMountPoint  string
-	flagReadOnly    bool
-	flagLUKSDevice  string
-	flagLVMGroup    string
-	flagFSType      string
-	flagMountOpts   string
-	flagNetworkShare bool
-)
+func runMount(args []string) {
+	fs := flag.NewFlagSet("mount", flag.ExitOnError)
+	mountPoint  := fs.String("mountpoint", "", "Host mount point (default: auto-generated)")
+	readOnly    := fs.Bool("read-only", false, "Mount read-only")
+	luks        := fs.String("luks", "", "In-VM device for LUKS container (e.g. /dev/sda1)")
+	lvm         := fs.String("lvm", "", "LVM volume group/logical volume (e.g. vg0/home)")
+	fstype      := fs.String("fstype", "", "Filesystem type hint (ext4, btrfs, xfs, zfs, ...)")
+	mountOpts   := fs.String("mount-opts", "", "Extra mount options passed inside the VM")
+	netShare    := fs.Bool("network-share", false, "Expose share on the local network")
 
-var mountCmd = &cobra.Command{
-	Use:   "mount <device>",
-	Short: "Mount a Linux filesystem and expose it as a network share.",
-	Long: `Mount a block device or disk image containing a Linux filesystem.
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Usage: linuxfs-mac mount [flags] <device>
 
+Mount a block device or disk image containing a Linux filesystem.
 The device is passed through to an Alpine Linux VM which mounts it natively.
 The mounted filesystem is then exposed to the host via a network share.
 
 Examples:
-  # Mount an ext4 partition
   linuxfs-mac mount /dev/disk2s1
-
-  # Mount a LUKS-encrypted partition
   linuxfs-mac mount /dev/disk2s1 --luks /dev/sda1
-
-  # Mount a specific LVM logical volume
-  linuxfs-mac mount /dev/disk2s1 --lvm my-vg/my-lv
-
-  # Mount read-only
+  linuxfs-mac mount /dev/disk2s1 --lvm vg0/home
   linuxfs-mac mount /dev/disk2s1 --read-only
-
-  # Mount a disk image
   linuxfs-mac mount /path/to/disk.img
-
-  # Mount with explicit filesystem type
   linuxfs-mac mount /dev/disk2s1 --fstype btrfs --mount-opts subvol=@home
 
-  # Share on the local network (not just localhost)
-  linuxfs-mac mount /dev/disk2s1 --network-share`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		device := args[0]
+Flags:
+`)
+		fs.PrintDefaults()
+	}
 
-		backend := flagBackend
-		if backend == "" {
-			backend = defaultBackend()
-		}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
 
-		fmt.Printf("Mounting %s via %s backend ...\n", device, backend)
-		fmt.Printf("  VM memory:  %d MiB\n", flagVMMemMiB)
-		fmt.Printf("  Read-only:  %v\n", flagReadOnly)
-		if flagLUKSDevice != "" {
-			fmt.Printf("  LUKS:       %s\n", flagLUKSDevice)
-		}
-		if flagLVMGroup != "" {
-			fmt.Printf("  LVM:        %s\n", flagLVMGroup)
-		}
-		if flagFSType != "" {
-			fmt.Printf("  FS type:    %s\n", flagFSType)
-		}
+	device := fs.Arg(0)
+	backend := flagBackend
+	if backend == "" {
+		backend = defaultBackend()
+	}
 
-		// TODO: wire up vm.Manager to start Alpine VM, pass device through,
-		// mount inside VM, and start share backend.
-		fmt.Fprintln(os.Stderr, "mount: VM backend not yet wired — see vm/ package")
-		return nil
-	},
+	fmt.Printf("Mounting %s via %s backend ...\n", device, backend)
+	fmt.Printf("  VM memory:  %d MiB\n", flagVMMemMiB)
+	fmt.Printf("  Read-only:  %v\n", *readOnly)
+	if *luks != "" {
+		fmt.Printf("  LUKS:       %s\n", *luks)
+	}
+	if *lvm != "" {
+		fmt.Printf("  LVM:        %s\n", *lvm)
+	}
+	if *fstype != "" {
+		fmt.Printf("  FS type:    %s\n", *fstype)
+	}
+	if *mountPoint != "" {
+		fmt.Printf("  Mountpoint: %s\n", *mountPoint)
+	}
+	if *mountOpts != "" {
+		fmt.Printf("  Mount opts: %s\n", *mountOpts)
+	}
+	if *netShare {
+		fmt.Println("  Network share: enabled")
+	}
+
+	// TODO: wire up vm.Manager to start Alpine VM, pass device through,
+	// mount inside VM, and start share backend.
+	fmt.Fprintln(os.Stderr, "mount: VM backend not yet wired — see vm/ package")
+	os.Exit(1)
 }
 
-var unmountCmd = &cobra.Command{
-	Use:   "unmount <device|mountpoint>",
-	Short: "Unmount a previously mounted Linux filesystem.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("Unmounting %s ...\n", args[0])
-		// TODO: signal running VM to unmount and shut down.
-		fmt.Fprintln(os.Stderr, "unmount: not yet implemented")
-		return nil
-	},
+func runUnmount(args []string) {
+	fs := flag.NewFlagSet("unmount", flag.ExitOnError)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: linuxfs-mac unmount <device|mountpoint>")
+		os.Exit(1)
+	}
+	fmt.Printf("Unmounting %s ...\n", fs.Arg(0))
+	// TODO: signal running VM to unmount and shut down.
+	fmt.Fprintln(os.Stderr, "unmount: not yet implemented")
+	os.Exit(1)
 }
 
 func defaultBackend() string {
@@ -99,21 +105,4 @@ func defaultBackend() string {
 	default:
 		return "ftp"
 	}
-}
-
-func init() {
-	mountCmd.Flags().StringVar(&flagMountPoint, "mountpoint", "",
-		"Host mount point (default: auto-generated under /Volumes on macOS)")
-	mountCmd.Flags().BoolVar(&flagReadOnly, "read-only", false,
-		"Mount read-only")
-	mountCmd.Flags().StringVar(&flagLUKSDevice, "luks", "",
-		"In-VM device name for LUKS container (e.g. /dev/sda1)")
-	mountCmd.Flags().StringVar(&flagLVMGroup, "lvm", "",
-		"LVM volume group/logical volume to mount (e.g. vg0/home)")
-	mountCmd.Flags().StringVar(&flagFSType, "fstype", "",
-		"Filesystem type hint (ext4, btrfs, xfs, zfs, ntfs, exfat, ...)")
-	mountCmd.Flags().StringVar(&flagMountOpts, "mount-opts", "",
-		"Extra options passed to mount inside the VM (e.g. subvol=@home)")
-	mountCmd.Flags().BoolVar(&flagNetworkShare, "network-share", false,
-		"Expose share on the local network, not just localhost")
 }
