@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// mount/backends.go — file share backend registry.
+// mount/backends.go — file share backend registry and host-side mount helpers.
 //
 // Each backend exposes the filesystem mounted inside the Alpine VM to the host.
 // Derived from AlexSSD7/linsk (share/) and nohajc/anylinuxfs (NFS backend).
@@ -9,6 +9,7 @@ package mount
 
 import (
 	"fmt"
+	"os/exec"
 	"runtime"
 )
 
@@ -83,4 +84,42 @@ func (c Config) MountURL(shareName string) string {
 	default:
 		return ""
 	}
+}
+
+// AutoMount mounts the share URL at mountPoint on the host.
+// On macOS it uses the `mount` command; on Linux it uses `mount.cifs` or `mount.nfs`.
+func AutoMount(shareURL, mountPoint string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		// macOS: `open` triggers Finder auto-mount for AFP/SMB/NFS URLs.
+		// For scripted use, `mount_afp`, `mount_smbfs`, `mount_nfs` are available.
+		cmd := exec.Command("open", shareURL)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("open %s: %w\n%s", shareURL, err, out)
+		}
+		return nil
+	case "linux":
+		cmd := exec.Command("mount", shareURL, mountPoint)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("mount %s: %w\n%s", shareURL, err, out)
+		}
+		return nil
+	default:
+		return fmt.Errorf("AutoMount not implemented on %s — connect to %s manually", runtime.GOOS, shareURL)
+	}
+}
+
+// AutoUnmount unmounts a previously mounted share.
+func AutoUnmount(mountPoint string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("diskutil", "unmount", mountPoint)
+	default:
+		cmd = exec.Command("umount", mountPoint)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("unmount %s: %w\n%s", mountPoint, err, out)
+	}
+	return nil
 }
