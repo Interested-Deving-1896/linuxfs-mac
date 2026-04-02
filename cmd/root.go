@@ -10,14 +10,16 @@ import (
 
 // Global flags shared across subcommands.
 var (
-	flagVMMemMiB  uint
-	flagDebug     bool
-	flagDataDir   string
-	flagBackend   string
-	flagListenIP  string
+	flagVMMemMiB uint
+	flagDebug    bool
+	flagDataDir  string
+	flagBackend  string
+	flagListenIP string
 )
 
-func init() {
+// Execute parses global flags then dispatches to the appropriate subcommand.
+func Execute() {
+	// Define global flags on the default FlagSet.
 	flag.UintVar(&flagVMMemMiB, "vm-mem", 512,
 		"RAM allocated to the Alpine VM in MiB (use >=2048 for LUKS)")
 	flag.BoolVar(&flagDebug, "debug", false,
@@ -28,19 +30,37 @@ func init() {
 		"File share backend: smb, afp, nfs, ftp (auto-detected by OS if empty)")
 	flag.StringVar(&flagListenIP, "listen-ip", "127.0.0.1",
 		"IP address the share server listens on")
-}
 
-// Execute parses args and dispatches to the appropriate subcommand.
-func Execute() {
 	flag.Usage = usage
+
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
 	}
 
+	// Detect subcommand: first non-flag argument.
 	sub := os.Args[1]
-	// Remaining args after the subcommand name.
-	rest := os.Args[2:]
+	if sub == "-h" || sub == "--help" || sub == "help" {
+		usage()
+		return
+	}
+
+	// Parse global flags that appear before the subcommand.
+	// e.g.: linuxfs-mac --vm-mem 2048 mount /dev/disk2s1
+	// Also handle subcommand-first style: linuxfs-mac mount --vm-mem 2048 /dev/disk2s1
+	// We do a best-effort parse: stop at the first non-flag token.
+	_ = flag.CommandLine.Parse(os.Args[1:]) //nolint:errcheck
+
+	// After parsing, flag.Args() contains the remaining non-flag args.
+	// The first of those is the subcommand.
+	args := flag.Args()
+	if len(args) == 0 {
+		usage()
+		os.Exit(1)
+	}
+
+	sub = args[0]
+	rest := args[1:]
 
 	switch sub {
 	case "mount":
@@ -66,7 +86,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `linuxfs-mac — access Linux-native filesystems on macOS and Windows.
 
 Usage:
-  linuxfs-mac <subcommand> [flags]
+  linuxfs-mac [global flags] <subcommand> [flags] [args]
 
 Subcommands:
   mount     Mount a Linux filesystem and expose it as a network share

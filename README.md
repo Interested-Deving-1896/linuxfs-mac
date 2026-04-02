@@ -101,17 +101,18 @@ lighter-weight VM (~256 MB RAM vs ~512 MB). This is the approach used by
 ```
 linuxfs-mac/
 ├── main.go
-├── cmd/           # CLI commands (cobra)
-│   ├── root.go
-│   ├── mount.go
-│   ├── list.go
-│   ├── shell.go
+├── cmd/              # CLI commands (stdlib flag)
+│   ├── root.go       # Global flag parsing and subcommand dispatch
+│   ├── mount.go      # mount / unmount — starts VM, wires share
+│   ├── list.go       # list — reads mounts.json state file
+│   ├── shell.go      # shell — SSH into running Alpine VM
 │   └── version.go
-├── vm/            # Alpine VM lifecycle (QEMU + libkrun)
-│   ├── vm.go
-│   └── image.go
-├── mount/         # Share backend registry (AFP, NFS, SMB, FTP)
-│   └── backends.go
+├── vm/               # Alpine VM lifecycle (QEMU + libkrun stub)
+│   ├── vm.go         # Start/Stop, platform-aware accel (KVM/HVF/WHPX)
+│   ├── image.go      # Alpine qcow2 download with progress + SHA-256
+│   └── cloudinit.go  # cloud-init seed ISO (SSH key injection)
+├── mount/            # Share backend registry + host-side mount helpers
+│   └── backends.go   # AFP/NFS/SMB/FTP config, AutoMount, AutoUnmount
 └── docs/
     └── libkrun.md
 ```

@@ -12,8 +12,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 // Backend selects the hypervisor used to run the Alpine VM.
@@ -21,7 +24,7 @@ type Backend int
 
 const (
 	// BackendQEMU uses qemu-system-x86_64 / qemu-system-aarch64.
-	// Works on Linux, macOS (Intel + Apple Silicon), and Windows.
+	// Works on Linux (KVM), macOS (HVF), and Windows (WHPX/TCG).
 	BackendQEMU Backend = iota
 
 	// BackendLibkrun uses libkrun (Apple Silicon only).
@@ -104,6 +107,25 @@ func (v *VM) Stop() error {
 	return nil
 }
 
+// accelFlag returns the correct QEMU acceleration flag for the current OS.
+// Linux uses KVM, macOS uses Apple's Hypervisor.framework (HVF),
+// Windows uses WHPX (falls back to TCG if unavailable).
+func accelFlag() string {
+	switch runtime.GOOS {
+	case "linux":
+		if _, err := os.Stat("/dev/kvm"); err == nil {
+			return "kvm"
+		}
+		return "tcg"
+	case "darwin":
+		return "hvf"
+	case "windows":
+		return "whpx"
+	default:
+		return "tcg"
+	}
+}
+
 func (v *VM) startQEMU() error {
 	binary := "qemu-system-x86_64"
 	if runtime.GOARCH == "arm64" {
@@ -119,18 +141,37 @@ func (v *VM) startQEMU() error {
 		return fmt.Errorf("alpine image: %w", err)
 	}
 
+	// Ensure cloud-init seed ISO exists (injects SSH key + user into Alpine).
+	cacheD := v.cfg.DataDir
+	if cacheD == "" {
+		cacheD, err = cacheDir()
+		if err != nil {
+			return fmt.Errorf("cache dir: %w", err)
+		}
+	}
+	seedISO, err := EnsureCloudInitSeed(cacheD)
+	if err != nil {
+		return fmt.Errorf("cloud-init seed: %w", err)
+	}
+
 	sshPort := v.cfg.SSHPort
 	if sshPort == 0 {
 		sshPort = 10022
 	}
 	v.SSHPort = sshPort
 
+	accel := accelFlag()
+
 	args := []string{
-		"-enable-kvm",
+		"-accel", accel,
 		"-m", fmt.Sprintf("%d", v.cfg.MemMiB),
 		"-nographic",
 		"-serial", "mon:stdio",
+		// Alpine root disk
 		"-drive", fmt.Sprintf("if=virtio,format=qcow2,file=%s", alpineImage),
+		// cloud-init seed ISO (provides SSH key + user on first boot)
+		"-drive", fmt.Sprintf("if=virtio,format=raw,file=%s,readonly=on", seedISO),
+		// Target block device / image to mount
 		"-drive", fmt.Sprintf("if=virtio,format=raw,file=%s,readonly=%s",
 			v.cfg.DevicePath, boolToOnOff(v.cfg.ReadOnly)),
 		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:22", sshPort),
@@ -139,19 +180,58 @@ func (v *VM) startQEMU() error {
 
 	v.logger.Info("Starting QEMU Alpine VM",
 		"binary", binary,
+		"accel", accel,
 		"mem_mib", v.cfg.MemMiB,
 		"device", v.cfg.DevicePath,
 		"ssh_port", sshPort,
 	)
 
 	v.cmd = exec.CommandContext(v.ctx, binary, args...)
-	return v.cmd.Start()
+	if v.cfg.Debug {
+		v.cmd.Stdout = os.Stdout
+		v.cmd.Stderr = os.Stderr
+	}
+	if err := v.cmd.Start(); err != nil {
+		return fmt.Errorf("qemu start: %w", err)
+	}
+
+	// Wait for SSH to become available (up to 120 seconds).
+	return v.waitForSSH(120 * time.Second)
+}
+
+// waitForSSH polls the SSH port until it accepts connections or the timeout expires.
+func (v *VM) waitForSSH(timeout time.Duration) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", v.SSHPort)
+	deadline := time.Now().Add(timeout)
+
+	v.logger.Info("Waiting for Alpine VM SSH", "addr", addr, "timeout", timeout)
+
+	for time.Now().Before(deadline) {
+		// Check if the QEMU process died unexpectedly.
+		if v.cmd.ProcessState != nil && v.cmd.ProcessState.Exited() {
+			return fmt.Errorf("QEMU process exited unexpectedly")
+		}
+
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err == nil {
+			conn.Close()
+			v.logger.Info("Alpine VM SSH ready", "addr", addr)
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("timed out waiting for Alpine VM SSH on %s after %s", addr, timeout)
 }
 
 func (v *VM) startLibkrun() error {
-	// libkrun integration requires CGo bindings to libkrun.dylib.
-	// See docs/libkrun.md for build instructions.
-	return fmt.Errorf("libkrun backend: CGo integration not yet compiled — see docs/libkrun.md")
+	// libkrun provides a lighter-weight hypervisor using Apple's Hypervisor.framework.
+	// It requires CGo bindings to libkrun.dylib — see docs/libkrun.md.
+	// Use QEMU backend (with -accel hvf) as a fully functional alternative on macOS.
+	return fmt.Errorf(
+		"libkrun backend requires CGo bindings not yet compiled.\n" +
+			"Use the default QEMU backend instead (works on Apple Silicon via -accel hvf).\n" +
+			"See docs/libkrun.md for build instructions.",
+	)
 }
 
 func boolToOnOff(b bool) string {
