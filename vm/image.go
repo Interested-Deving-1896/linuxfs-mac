@@ -12,22 +12,20 @@ import (
 	"runtime"
 )
 
-const (
-	alpineVersion   = "3.19.1"
-	alpineArch_amd  = "x86_64"
-	alpineArch_arm  = "aarch64"
-	alpineImageSize = "512M"
-)
+const alpineVersion = "3.19.1"
+
+func alpineArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return "x86_64"
+}
 
 // alpineImageURL returns the download URL for the Alpine virtual disk image.
 func alpineImageURL() string {
-	arch := alpineArch_amd
-	if runtime.GOARCH == "arm64" {
-		arch = alpineArch_arm
-	}
 	return fmt.Sprintf(
 		"https://dl-cdn.alpinelinux.org/alpine/v%s/releases/cloud/alpine-virt-%s-%s.qcow2",
-		alpineVersion[:4], alpineVersion, arch,
+		alpineVersion[:4], alpineVersion, alpineArch(),
 	)
 }
 
@@ -47,7 +45,7 @@ func cacheDir() (string, error) {
 // ensureAlpineImage returns the path to a cached Alpine qcow2 image,
 // downloading it if not present.
 func ensureAlpineImage(cfg Config) (string, error) {
-	dir := cfg.DevicePath // reuse data-dir if set; otherwise use cache
+	dir := cfg.DataDir
 	if dir == "" {
 		var err error
 		dir, err = cacheDir()
@@ -56,27 +54,16 @@ func ensureAlpineImage(cfg Config) (string, error) {
 		}
 	}
 
-	arch := alpineArch_amd
-	if runtime.GOARCH == "arm64" {
-		arch = alpineArch_arm
-	}
-	imageName := fmt.Sprintf("alpine-virt-%s-%s.qcow2", alpineVersion, arch)
+	imageName := fmt.Sprintf("alpine-virt-%s-%s.qcow2", alpineVersion, alpineArch())
 	imagePath := filepath.Join(dir, imageName)
 
 	if _, err := os.Stat(imagePath); err == nil {
-		return imagePath, nil // already cached
+		return imagePath, nil
 	}
 
 	url := alpineImageURL()
-	fmt.Printf("Downloading Alpine Linux VM image (%s) ...\n", alpineVersion)
-	fmt.Printf("  URL: %s\n", url)
-	fmt.Printf("  Destination: %s\n", imagePath)
-
-	// TODO: implement download with progress bar.
-	// For now, return an error directing the user to download manually.
 	return "", fmt.Errorf(
-		"Alpine VM image not found at %s\n"+
-			"Download manually:\n  curl -L %s -o %s",
+		"Alpine VM image not found at %s\nDownload manually:\n  curl -L %s -o %s",
 		imagePath, url, imagePath,
 	)
 }

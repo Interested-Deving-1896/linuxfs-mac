@@ -49,6 +49,9 @@ type Config struct {
 
 	// Backend selects the hypervisor.
 	Backend Backend
+
+	// DataDir overrides the default cache directory for VM images.
+	DataDir string
 }
 
 // VM represents a running Alpine Linux microVM instance.
@@ -59,7 +62,8 @@ type VM struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	SSHPort uint16 // resolved port (set after Start)
+	// SSHPort is the resolved host port (set after Start).
+	SSHPort uint16
 }
 
 // New creates a VM instance. Call Start to launch it.
@@ -100,7 +104,6 @@ func (v *VM) Stop() error {
 	return nil
 }
 
-// startQEMU builds and runs the QEMU command for the Alpine VM.
 func (v *VM) startQEMU() error {
 	binary := "qemu-system-x86_64"
 	if runtime.GOARCH == "arm64" {
@@ -111,8 +114,6 @@ func (v *VM) startQEMU() error {
 		return fmt.Errorf("%s not found: install QEMU first", binary)
 	}
 
-	// Alpine VM image is embedded or downloaded on first run.
-	// See vm/image.go for the download/cache logic.
 	alpineImage, err := ensureAlpineImage(v.cfg)
 	if err != nil {
 		return fmt.Errorf("alpine image: %w", err)
@@ -120,7 +121,7 @@ func (v *VM) startQEMU() error {
 
 	sshPort := v.cfg.SSHPort
 	if sshPort == 0 {
-		sshPort = 10022 // TODO: auto-select free port
+		sshPort = 10022
 	}
 	v.SSHPort = sshPort
 
@@ -129,12 +130,9 @@ func (v *VM) startQEMU() error {
 		"-m", fmt.Sprintf("%d", v.cfg.MemMiB),
 		"-nographic",
 		"-serial", "mon:stdio",
-		// Alpine root disk
 		"-drive", fmt.Sprintf("if=virtio,format=qcow2,file=%s", alpineImage),
-		// Pass-through device
 		"-drive", fmt.Sprintf("if=virtio,format=raw,file=%s,readonly=%s",
 			v.cfg.DevicePath, boolToOnOff(v.cfg.ReadOnly)),
-		// SSH port forward
 		"-netdev", fmt.Sprintf("user,id=net0,hostfwd=tcp::%d-:22", sshPort),
 		"-device", "virtio-net-pci,netdev=net0",
 	}
@@ -147,17 +145,12 @@ func (v *VM) startQEMU() error {
 	)
 
 	v.cmd = exec.CommandContext(v.ctx, binary, args...)
-	if v.cfg.Debug {
-		// attach stdout/stderr for debug output
-	}
 	return v.cmd.Start()
 }
 
-// startLibkrun starts the VM using libkrun (Apple Silicon only).
-// libkrun provides a lighter-weight hypervisor using Apple's Hypervisor.framework.
 func (v *VM) startLibkrun() error {
 	// libkrun integration requires CGo bindings to libkrun.dylib.
-	// This is a stub; see docs/libkrun.md for build instructions.
+	// See docs/libkrun.md for build instructions.
 	return fmt.Errorf("libkrun backend: CGo integration not yet compiled — see docs/libkrun.md")
 }
 
