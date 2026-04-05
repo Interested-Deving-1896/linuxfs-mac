@@ -62,3 +62,5 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build -o linuxfs-mac-${{ matrix.goos }}-${{ matrix.goarch }} .
+      - name: Ensure go.sum is updated
+        run: go mod tidy
